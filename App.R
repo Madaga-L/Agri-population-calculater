@@ -1,77 +1,52 @@
 library(shiny)
 library(shinythemes)
 library(sf)
-library(raster)
 library(dplyr)
-library(httr)
+library(rgdal)
 library(terra)
 library(leaflet)
-library(reshape2)
-library(maptools)
-library(spatstat)
-library(gstat)
 library(leaflet.extras)
-library(rgdal)
 
-setwd("H:\\CIMMYT Shiny project\\Data_2")
+# Read Africa countries shapefile and transform to WGS84
+gadm_sf <- st_read("Africa_countries.shp") %>%
+  st_transform("+init=EPSG:4326") %>%
+  st_make_valid()
 
-# Load country boundaries from GADM
-gadm_sf <- st_read("Africa_countries.shp") %>% st_make_valid()
+# Load farming system boundaries from FAO and transform to WGS84
+fao_sf <- st_read("fao_gadm_intersect.shp") %>%
+  st_transform("+init=EPSG:4326") %>%
+  st_make_valid()
 
-# Load farming system boundaries from FAO
-fao_sf <- st_read("fao_gadm_intersect.shp") %>% st_make_valid()
+# Load WorldPop population dataset and transform to WGS84
+wp_path <- "AFR_PPP_2020_adj_v2.tif"
+worldpop_pop <- terra::rast(wp_path)
 
-# Load WorldPop population dataset
-wp_path <- "H:\\CIMMYT Shiny project\\Data_2\\AFR_PPP_2020_adj_v2.tif"
-worldpop_pop <- raster::brick(wp_path)
+# Set the CRS of fao_sf to match worldpop_pop
+fao_sf <- st_transform(fao_sf, st_crs(worldpop_pop))
 
-# Define the reclassification matrix
-reclass_mat <- matrix(c(0, 10, 1,
-                        10, 50, 2,
-                        50, 100, 3,
-                        100, 500, 4,
-                        500, 1000, 5,
-                        1000, 5000, 6,
-                        5000, 10000, 7,
-                        10000, 50000, 8,
-                        50000, 100000, 9,
-                        100000, Inf, 10), ncol = 3, byrow = TRUE)
+# Set the CRS of fao_sf to match worldpop_pop
+gadm_sf <- st_transform(gadm_sf, st_crs(worldpop_pop))
 
-# Reclassify the raster
-worldpop_pop_reclass <- raster::reclassify(worldpop_pop, reclass_mat)
+#load spam dataset
+# physical area from SPAM 2010
+mylist <- list.files(pattern="._A.tif$")
 
-# create a new plotting device with larger size
-dev.new(width = 8, height = 6)
+mylist 
 
-# plot the raster with smaller margins
-plot(worldpop_pop_reclass, 
-     main="Africa Population", 
-     col=rev(terrain.colors(10)), 
-     legend=TRUE, 
-     legend.args=list(at=seq(0,100000,10000), 
-                      labels=prettyNum(seq(0,100000,10000), big.mark=","),
-                      text="Population (thousands)"),
-     mar=c(2,2,2,2) # Set smaller margins
-)
+r <- rast(mylist)
+
+# visualize
+plot(r[[1]], type="interval", breaks=c(0,1,10,50,100,500,1000, Inf), ext=ext(gadm_sf))
 
 
-# Load SPAM dataset
-spam_path <- "H:\\CIMMYT Shiny project\\Data_2\\spam2010V2r0_global_Y_MAIZ_A.tif"
-spam_yield <- raster::brick(spam_path)
+# crop extent to gadm_sf
+spam_yield <- terra::crop(r, gadm_sf)
 
-reclass_mat_spam <- matrix(c(-Inf, 0, 0,
-                             0, 1000, 1,
-                             1000, 2000, 2,
-                             2000, 4000, 3,
-                             4000, 8000, 4,
-                             8000, 16000, 5,
-                             16000, Inf, 6), ncol = 3, byrow = TRUE)
+# sum crop area for all 42 crops
+agext <- sum(spam_yield)
 
 
-# Reclassify the raster
-spam_yield_reclass <- raster::reclassify(spam_yield, reclass_mat_spam)
-
-
+#Define the UI
 ui <- bootstrapPage(
   navbarPage(
     theme = shinytheme("flatly"), collapsible = TRUE, id = "nav",
@@ -83,7 +58,9 @@ ui <- bootstrapPage(
                  width = 4,
                  selectInput(
                    inputId = "country",
-                   label = "Select Country",
+                   label = tags$span("Select Country", 
+                                     style = "cursor: help;", 
+                                     title = "Select the country for which you want to calculate agricultural population. The data available includes information on the farming system and the population density of different administrative levels."),
                    choices = unique(gadm_sf$ADM0_NAME)
                  )
                ),
@@ -91,7 +68,9 @@ ui <- bootstrapPage(
                  width = 4,
                  selectInput(
                    inputId = "farming_system",
-                   label = "Select Farming System",
+                   label = tags$span("Select Farming System", 
+                                     style = "cursor: help;", 
+                                     title = "Select the farming system for which you want to calculate agricultural population. The available options depend on the country selected."),
                    choices = NULL
                  )
                ),
@@ -111,7 +90,7 @@ ui <- bootstrapPage(
     
     tabPanel("Data",
              numericInput(inputId = "maxrows", label = "Rows to show", value = 25),
-             "Adapted from data provided by ",
+             "This tool uses data provided by ",
              tags$a(href = "https://gadm.org/data.html", "GADM"),
              ", ",
              tags$a(href = "http://www.fao.org/geonetwork/srv/en/main.home", "FAO"),
@@ -124,20 +103,15 @@ ui <- bootstrapPage(
     
     tabPanel("About this site",
              tags$div(
-               tags$h4("Background"), 
-               "CGIAR is a global research partnership for a food-secure future. ",
-               "CGIAR science is dedicated to reducing poverty, enhancing food and nutrition security, and improving natural resources and ecosystem services. ",
-               "Its research is carried out by 15 CGIAR centers, including CIMMYT. ", 
-               "Through CGIAR Research Programs (CRPs), Centers and partners work on integrated research programs, drawing on the expertise of other Centers and a multitude of partners.", 
-               tags$br(),tags$br(),
-               tags$h4("CIMMYT CRPs"), 
-               "The CGIAR Research Program on Maize (MAIZE) focuses on increasing production for 900 million poor consumers in Africa, South Asia, and Latin America. Overarching goals include doubling maize productivity and increasing incomes and livelihood opportunities from sustainable, maize-based farming systems.",
-               tags$br(),tags$br(),
-               "The CGIAR Research Program on Wheat (WHEAT) couples advanced science with field-level research and extension in lower- and middle-income countries to raise the productivity, production and affordable availability of wheat agri-food systems for 2.5 billion resource-poor consumers in 89 countries.",
-               tags$br(),tags$br(),
+               tags$h4("What is the Agricultural Population Mapper?"),
+               "The Agricultural Population Mapper is a tool that allows you to estimate the population living in rural areas and engaged in different farming systems in a given country.",
+               tags$br(), tags$br(),
+               tags$h4("How can I use it?"),
+               "To use the Agricultural Population Mapper, simply select the country and farming system you're interested in and click the 'Calculate Population' button. The tool will return a table and a map showing the population and population density of different administrative levels within the selected country and farming system.",
+               tags$br(), tags$br(),
                tags$h4("Code"),
                "Code and input data used to generate this Shiny mapping tool are available on ",
-               tags$a(href="https://github.com/Madaga-L/Rshiny-Agri-population-calculator", "Github."),
+               tags$a(href="https://github.com/Madaga-L/Agri-population-calculator", "Github."),
                tags$br(),tags$br(),
                tags$h4("Acknowledgements"),
                "This app was developed by CIMMYT as part of Ex Ante Evaluation Support to Prospective Agronomy Interventions."
@@ -163,33 +137,46 @@ server <- function(input, output, session) {
     farming_system_geom <- fao_sf[fao_sf$DESCRIPTIO == farming_system_name & fao_sf$ADM0_NAME == country_name, ]
     
     country_geom <- gadm_sf[gadm_sf$ADM0_NAME == country_name, ]
-    country_extent <- st_bbox(country_geom)
-    farming_system_extent <- st_bbox(farming_system_geom)
-    intersection_extent <- st_intersection(country_geom, farming_system_geom) %>%
-      st_bbox()
+    farming_system_geom <- fao_sf[fao_sf$DESCRIPTIO == farming_system_name & fao_sf$ADM0_NAME == country_name, ]
+    intersection_extent <- st_intersection(country_geom, farming_system_geom)
     
-    worldpop_pop_crop <- raster::crop(worldpop_pop_reclass, intersection_extent)
-    spam_yield_crop <- raster::crop(spam_yield_reclass, intersection_extent)
+    ##create a new raster object rr using the same resolution and extent as the worldpop_pop raster, but based on the geometry of the farming_system_geom.
+    rr <- terra::rast(intersection_extent, resolution = res(worldpop_pop), ext = ext(worldpop_pop))
     
-    total_population <- sum(as.vector(values(worldpop_pop_crop)), na.rm = TRUE)
-    total_yield <- sum(as.vector(values(spam_yield_crop)), na.rm = TRUE)
+    ##rasterize the farming system geometry to be used in masking
+    farming_system_raster <- terra::rasterize(intersection_extent, field = "gridcode", rr, fun = "sum", overwrite = TRUE)
+    
+    #mask population based on farming system selected
+    worldpop_pop_mask <- terra::mask(worldpop_pop, farming_system_raster)
+    
+    # Resample spam_yield to have the same extent as worldpop_pop
+    spam_yield_resampled <- terra::resample(agext, rr)
+    
+    spam_yield_mask <- terra::mask(spam_yield_resampled, farming_system_raster) 
+    
+    total_population_sum <- sum(as.vector(worldpop_pop_mask), na.rm = TRUE)
+    mean_population <- mean(as.vector(worldpop_pop_mask), na.rm = TRUE, FUN = mean)
+    mean_yield <- mean(as.vector(spam_yield_mask), na.rm = TRUE, FUN = mean)
     
     output$result_table <- renderTable({
-      data.frame("Total Population density within Agricultural Area" = total_population,
-                 "Maize Yield within Agricultural Area(kg/ha)" = total_yield)
+      data.frame("Total_Population" = total_population_sum,
+                 "mean_Population" = mean_population,
+                 "mean_SPAM_Yield" = mean_yield)
     })
-    pal0 <- colorNumeric(c("RdYlBu"), values(worldpop_pop_crop),
+    
+    # convert SpatRaster to rasterLayer object
+    worldpop_pop_mask_raster <- raster(worldpop_pop_mask)
+    
+    pal0 <- colorNumeric(c("RdYlBu"), na.omit(values(worldpop_pop_mask_raster)),
                          na.color = "transparent")
     
+    
     output$result_map <- renderLeaflet({
-      farming_system_geom %>% 
-        st_transform(crs = 4326) %>% 
-        leaflet() %>% 
+      leaflet() %>% 
         addProviderTiles("CartoDB.Positron") %>% 
-        addPolygons() %>% 
-        addRasterImage(worldpop_pop_crop, colors = pal0,opacity = 0.4) %>%
-        addLegend(pal = pal0, values = values(worldpop_pop_crop), 
-                  title = "Population(thousands)",
+        addRasterImage(worldpop_pop_mask_raster, colors = pal0, opacity = 0.9) %>%
+        addLegend(pal = pal0, values = values(worldpop_pop_mask_raster), 
+                  title = "Population",
                   position = "bottomright")
     })
   })
