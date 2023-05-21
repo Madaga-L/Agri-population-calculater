@@ -1,3 +1,5 @@
+library(shiny)
+
 #Define the UI
 ui <- bootstrapPage(
   navbarPage(
