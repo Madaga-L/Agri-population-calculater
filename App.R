@@ -4,47 +4,47 @@ library(sf)
 library(dplyr)
 library(rgdal)
 library(terra)
+library(raster)
 library(leaflet)
 library(leaflet.extras)
 
-# Read Africa countries shapefile and transform to WGS84
-gadm_sf <- st_read("Africa_countries.shp") %>%
-  st_transform("+init=EPSG:4326") %>%
-  st_make_valid()
+# Define global variables for the datasets
+gadm_sf <- NULL
+fao_sf <- NULL
+worldpop_pop <- NULL
+agext <- NULL
 
-# Load farming system boundaries from FAO and transform to WGS84
-fao_sf <- st_read("fao_gadm_intersect.shp") %>%
-  st_transform("+init=EPSG:4326") %>%
-  st_make_valid()
-
-# Load WorldPop population dataset and transform to WGS84
-wp_path <- "AFR_PPP_2020_adj_v2.tif"
-worldpop_pop <- terra::rast(wp_path)
-
-# Set the CRS of fao_sf to match worldpop_pop
-fao_sf <- st_transform(fao_sf, st_crs(worldpop_pop))
-
-# Set the CRS of fao_sf to match worldpop_pop
-gadm_sf <- st_transform(gadm_sf, st_crs(worldpop_pop))
-
-#load spam dataset
-# physical area from SPAM 2010
-mylist <- list.files(pattern="._A.tif$")
-
-mylist 
-
-r <- rast(mylist)
-
-# visualize
-plot(r[[1]], type="interval", breaks=c(0,1,10,50,100,500,1000, Inf), ext=ext(gadm_sf))
-
-
-# crop extent to gadm_sf
-spam_yield <- terra::crop(r, gadm_sf)
-
-# sum crop area for all 42 crops
-agext <- sum(spam_yield)
-
+# Load the datasets outside the server function
+load_datasets <- function() {
+  # Read Africa countries shapefile and transform to WGS84
+  gadm_sf <<- st_read("Africa_countries.shp") %>%
+    st_transform("+init=EPSG:4326") %>%
+    st_make_valid()
+  
+  # Load farming system boundaries from FAO and transform to WGS84
+  fao_sf <<- st_read("fao_gadm_intersect.shp") %>%
+    st_transform("+init=EPSG:4326") %>%
+    st_make_valid()
+  
+  # Load WorldPop population dataset and transform to WGS84
+  wp_path <- "AFR_PPP_2020_adj_v2.tif"
+  worldpop_pop <<- terra::rast(wp_path)
+  
+  # Set the CRS of fao_sf and gadm_sf to match worldpop_pop
+  fao_sf <<- st_transform(fao_sf, st_crs(worldpop_pop))
+  gadm_sf <<- st_transform(gadm_sf, st_crs(worldpop_pop))
+  
+  # Load spam dataset
+  mylist <- list.files(pattern = "._A.tif$")
+  r <- rast(mylist)
+  
+  # Crop extent to gadm_sf
+  spam_yield <- terra::crop(r, gadm_sf)
+  
+  # Sum crop area for all 42 crops
+  agext <<- sum(spam_yield)
+}
+load_datasets()
 
 #Define the UI
 ui <- bootstrapPage(
@@ -122,7 +122,6 @@ ui <- bootstrapPage(
 
 # Define Server
 server <- function(input, output, session) {
-  
   # Update farming system choices based on selected country
   observeEvent(input$country, {
     country_name <- input$country
@@ -140,19 +139,11 @@ server <- function(input, output, session) {
     farming_system_geom <- fao_sf[fao_sf$DESCRIPTIO == farming_system_name & fao_sf$ADM0_NAME == country_name, ]
     intersection_extent <- st_intersection(country_geom, farming_system_geom)
     
-    ##create a new raster object rr using the same resolution and extent as the worldpop_pop raster, but based on the geometry of the farming_system_geom.
-    rr <- terra::rast(intersection_extent, resolution = res(worldpop_pop), ext = ext(worldpop_pop))
-    
-    ##rasterize the farming system geometry to be used in masking
-    farming_system_raster <- terra::rasterize(intersection_extent, field = "gridcode", rr, fun = "sum", overwrite = TRUE)
     
     #mask population based on farming system selected
-    worldpop_pop_mask <- terra::mask(worldpop_pop, farming_system_raster)
+    worldpop_pop_mask <- terra::mask(worldpop_pop, intersection_extent)
     
-    # Resample spam_yield to have the same extent as worldpop_pop
-    spam_yield_resampled <- terra::resample(agext, rr)
-    
-    spam_yield_mask <- terra::mask(spam_yield_resampled, farming_system_raster) 
+    spam_yield_mask <- terra::mask(agext, intersection_extent) 
     
     total_population_sum <- sum(as.vector(worldpop_pop_mask), na.rm = TRUE)
     mean_population <- mean(as.vector(worldpop_pop_mask), na.rm = TRUE, FUN = mean)
