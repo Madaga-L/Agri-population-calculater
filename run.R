@@ -1,12 +1,4 @@
 library(shiny)
-library(shinythemes)
-library(sf)
-library(dplyr)
-library(rgdal)
-library(terra)
-library(raster)
-library(leaflet)
-library(leaflet.extras)
 
 port <- Sys.getenv('PORT')
 
