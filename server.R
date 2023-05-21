@@ -1,3 +1,11 @@
+library(sf)
+library(dplyr)
+library(rgdal)
+library(terra)
+library(raster)
+library(leaflet)
+library(leaflet.extras)
+
 # Define global variables for the datasets
 gadm_sf <- NULL
 fao_sf <- NULL
